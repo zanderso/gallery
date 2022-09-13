@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:ui' as ui;
+
 import 'package:dual_screen/dual_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:gallery/deferred_widget.dart';
 import 'package:gallery/main.dart';
 import 'package:gallery/pages/demo.dart';
@@ -136,7 +139,7 @@ class RouteConfiguration {
             settings: settings,
           );
         } else {
-          return MaterialPageRoute<void>(
+          return ShaderPageRoute<void>(
             builder: (context) => path.builder(context, match),
             settings: settings,
           );
@@ -189,5 +192,309 @@ class TwoPanePageRoute<T> extends OverlayRoute<T> {
             child: builder.call(context));
       }
     });
+  }
+}
+
+class FragmentProgramManager {
+  static final Map<String, ui.FragmentProgram> _programs = <String, ui.FragmentProgram>{};
+
+  static Future<void> initialize(String assetKey) async {
+    if (!_programs.containsKey(assetKey)) {
+      final ui.FragmentProgram program = await ui.FragmentProgram.fromAsset(
+        assetKey,
+      );
+      _programs.putIfAbsent(assetKey, () => program);
+    }
+  }
+
+  static ui.FragmentProgram lookup(String assetKey) => _programs[assetKey]!;
+}
+
+class ShaderPageRoute<T> extends MaterialPageRoute<T> {
+  ShaderPageRoute({
+    required super.builder,
+    super.settings,
+  });
+
+  ui.FragmentProgram get _program {
+    return FragmentProgramManager.lookup(_shaderAssets[
+      settings.name.hashCode % _shaderAssets.length
+    ]);
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (!_shadersInitialized) {
+      _initializeShaders();
+      return child;
+    }
+    return _ShaderPageTransition(
+      animation: animation,
+      secondaryAnimation: secondaryAnimation,
+      fragmentProgram: _program,
+      child: child,
+    );
+  }
+
+  static bool _shadersInitializing = false;
+  static bool _shadersInitialized = false;
+  static const List<String> _shaderAssets = <String>[
+    'shaders/crossswap.frag',
+    'shaders/curl_noise.frag',
+    'shaders/fork_shutter.frag',
+    'shaders/pixelated.frag',
+    'shaders/random_squares.frag',
+    'shaders/ripple.frag',
+    'shaders/spooky_fade.frag',
+    'shaders/zoom_blur.frag',
+  ];
+  static Future<void> _initializeShaders() async {
+    if (_shadersInitialized || _shadersInitializing) {
+      return;
+    }
+    _shadersInitializing = true;
+    for (final String shaderAsset in _shaderAssets) {
+      await FragmentProgramManager.initialize(shaderAsset);
+    }
+    _shadersInitialized = true;
+    _shadersInitializing = false;
+  }
+}
+
+class _ShaderPageTransition extends StatelessWidget {
+  const _ShaderPageTransition({
+    required this.animation,
+    required this.secondaryAnimation,
+    required this.fragmentProgram,
+    this.child,
+  }) : assert(animation != null),
+       assert(secondaryAnimation != null);
+
+  final Animation<double> animation;
+  final Animation<double> secondaryAnimation;
+  final ui.FragmentProgram fragmentProgram;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DualTransitionBuilder(
+      animation: animation,
+      forwardBuilder: (
+        BuildContext context,
+        Animation<double> animation,
+        Widget? child,
+      ) {
+        return _ShaderEnterTransition(
+          animation: animation,
+          fragmentProgram: fragmentProgram,
+          child: child,
+        );
+      },
+      reverseBuilder: (
+        BuildContext context,
+        Animation<double> animation,
+        Widget? child,
+      ) {
+        return _ShaderEnterTransition(
+          animation: animation,
+          fragmentProgram: fragmentProgram,
+          reverse: true,
+          child: child,
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+class _ShaderEnterTransition extends StatefulWidget {
+  const _ShaderEnterTransition({
+    required this.animation,
+    this.reverse = false,
+    required this.fragmentProgram,
+    this.child,
+  }) : assert(animation != null),
+       assert(reverse != null);
+
+  final Animation<double> animation;
+  final Widget? child;
+  final ui.FragmentProgram fragmentProgram;
+  final bool reverse;
+
+  @override
+  State<_ShaderEnterTransition> createState() => _ShaderEnterTransitionState();
+}
+
+class _ShaderEnterTransitionState extends State<_ShaderEnterTransition> with _ShaderTransitionBase {
+  @override
+  bool get useSnapshot => !kIsWeb;
+
+  late _ShaderEnterTransitionPainter delegate;
+
+  static final Animatable<double> _shaderInTransition = Tween<double>(
+    begin: 0.0,
+    end: 1.00,
+  );
+
+  static final Animatable<double> _shaderOutTransition = Tween<double>(
+    begin: 1.0,
+    end: 0.00,
+  );
+
+  void _updateAnimations() {
+    shaderTransition = (widget.reverse
+      ? _shaderOutTransition
+      : _shaderInTransition
+    ).animate(widget.animation);
+
+    widget.animation.addListener(onAnimationValueChange);
+    widget.animation.addStatusListener(onAnimationStatusChange);
+  }
+
+  @override
+  void initState() {
+    _updateAnimations();
+    delegate = _ShaderEnterTransitionPainter(
+      animation: shaderTransition,
+      fragmentProgram: widget.fragmentProgram,
+    );
+    super.initState();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ShaderEnterTransition oldWidget) {
+    if (oldWidget.reverse != widget.reverse || oldWidget.animation != widget.animation) {
+      oldWidget.animation.removeStatusListener(onAnimationStatusChange);
+      _updateAnimations();
+      delegate.dispose();
+      delegate = _ShaderEnterTransitionPainter(
+        animation: shaderTransition,
+        fragmentProgram: widget.fragmentProgram,
+      );
+    }
+    super.didUpdateWidget(oldWidget);
+  }
+
+  @override
+  void dispose() {
+    widget.animation.removeListener(onAnimationValueChange);
+    widget.animation.removeStatusListener(onAnimationStatusChange);
+    delegate.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SnapshotWidget(
+      painter: delegate,
+      controller: controller,
+      mode: SnapshotMode.permissive,
+      child: widget.child,
+    );
+  }
+}
+
+mixin _ShaderTransitionBase {
+  bool get useSnapshot;
+
+  final SnapshotController controller = SnapshotController();
+
+  late Animation<double> shaderTransition;
+
+  void onAnimationValueChange() {
+    if (shaderTransition.value == 1.0) {
+      controller.allowSnapshotting = false;
+    } else {
+      controller.allowSnapshotting = useSnapshot;
+    }
+  }
+
+  void onAnimationStatusChange(AnimationStatus status) {
+    switch (status) {
+      case AnimationStatus.dismissed:
+      case AnimationStatus.completed:
+        controller.allowSnapshotting = false;
+        break;
+      case AnimationStatus.forward:
+      case AnimationStatus.reverse:
+        controller.allowSnapshotting = useSnapshot;
+        break;
+    }
+  }
+}
+
+final Float64List _identityMatrix = Float64List.fromList(<double>[
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+]);
+
+class _ShaderEnterTransitionPainter extends SnapshotPainter {
+  _ShaderEnterTransitionPainter({
+    required this.animation,
+    required ui.FragmentProgram fragmentProgram,
+  }) {
+    fragmentShader = fragmentProgram.fragmentShader();
+    animation.addListener(notifyListeners);
+  }
+
+  final Animation<double> animation;
+  late final ui.FragmentShader fragmentShader;
+
+  ui.Image? _cachedImage;
+  ImageShader? _cachedImageShader;
+
+  @override
+  void paint(
+    PaintingContext context,
+    ui.Offset offset,
+    Size size,
+    PaintingContextCallback painter,
+  ) {
+    painter(context, offset);
+  }
+
+  @override
+  void paintSnapshot(
+    PaintingContext context,
+    Offset offset,
+    Size size,
+    ui.Image image,
+    double pixelRatio,
+  ) {
+    final ImageShader imageShader = ImageShader(
+      image,
+      TileMode.clamp,
+      TileMode.clamp,
+      _identityMatrix,
+    );
+    fragmentShader
+      ..setFloat(0, animation.value)
+      ..setFloat(1, size.width)
+      ..setFloat(2, size.height)
+      ..setSampler(0, imageShader);
+    context.canvas.drawRect(
+      offset & size,
+      Paint()..shader = fragmentShader,
+    );
+  }
+
+  @override
+  void dispose() {
+    animation.removeListener(notifyListeners);
+    fragmentShader.dispose();
+    _cachedImageShader?.dispose();
+    super.dispose();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShaderEnterTransitionPainter oldPainter) {
+    return oldPainter.animation.value != animation.value;
   }
 }
