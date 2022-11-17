@@ -244,14 +244,7 @@ class ShaderPageRoute<T> extends MaterialPageRoute<T> {
   static bool _shadersInitializing = false;
   static bool _shadersInitialized = false;
   static const List<String> _shaderAssets = <String>[
-    'shaders/crossswap.frag',
-    'shaders/curl_noise.frag',
-    'shaders/fork_shutter.frag',
-    'shaders/pixelated.frag',
-    'shaders/random_squares.frag',
-    'shaders/ripple.frag',
-    'shaders/spooky_fade.frag',
-    'shaders/zoom_blur.frag',
+    'shaders/id.frag',
   ];
   static Future<void> _initializeShaders() async {
     if (_shadersInitialized || _shadersInitializing) {
@@ -466,23 +459,30 @@ class _ShaderEnterTransitionPainter extends SnapshotPainter {
     Offset offset,
     Size size,
     ui.Image image,
+    Size sourceSize,
     double pixelRatio,
   ) {
-    final ImageShader imageShader = ImageShader(
-      image,
-      TileMode.clamp,
-      TileMode.clamp,
-      _identityMatrix,
-    );
-    fragmentShader
-      ..setFloat(0, animation.value)
-      ..setFloat(1, size.width)
-      ..setFloat(2, size.height)
-      ..setSampler(0, imageShader);
-    context.canvas.drawRect(
-      offset & size,
-      Paint()..shader = fragmentShader,
-    );
+    final Rect src = Rect.fromLTWH(0, 0, sourceSize.width, sourceSize.height);
+    final Rect dst = Rect.fromLTWH(offset.dx, offset.dy, size.width, size.height);
+    final Paint paint = Paint()
+      ..filterQuality = FilterQuality.low;
+    context.canvas.drawImageRect(image, src, dst, paint);
+
+    // final ImageShader imageShader = ImageShader(
+    //   image,
+    //   TileMode.clamp,
+    //   TileMode.clamp,
+    //   _identityMatrix,
+    // );
+    // fragmentShader
+    //   ..setFloat(0, animation.value)
+    //   ..setFloat(1, size.width)
+    //   ..setFloat(2, size.height)
+    //   ..setSampler(0, imageShader);
+    // context.canvas.drawRect(
+    //   offset & size,
+    //   Paint()..shader = fragmentShader,
+    // );
   }
 
   @override
