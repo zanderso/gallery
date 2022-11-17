@@ -14,5 +14,5 @@ layout(location = 2) uniform sampler2D iChannel0;
 void main() {
   vec2 p = FlutterFragCoord().xy/iResolution;
   vec3 c = texture(iChannel0, p).xyz;
-  fragColor = vec4(c, 1.0);
+  fragColor = vec4(c * iTime, iTime);
 }
